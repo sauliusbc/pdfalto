@@ -1,0 +1,40 @@
+# Does GitHub reject a GITHUB_TOKEN push by the old/new branch tips, or by every new commit?
+name: probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push cases A, B, C with GITHUB_TOKEN
+        run: |
+          set +e
+          git config user.name probe; git config user.email probe@users.noreply.github.com
+          git remote add upstream https://github.com/kermitt2/pdfalto.git
+          git fetch -q upstream master
+          git fetch -q origin a-pristine b-stripped c-mayhem
+          echo "## upstream/master = $(git rev-parse upstream/master)" >> "$GITHUB_STEP_SUMMARY"
+          try() {  # case, refspec
+            out="$(git push --force origin "$2" 2>&1)"; rc=$?
+            echo "=== $1 (rc=$rc)"; echo "$out"
+            { echo "### $1: $([ $rc -eq 0 ] && echo ACCEPTED || echo REJECTED)"; echo '```'; echo "$out"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          }
+          # A control: pristine mirror reset to upstream (what sync.yml does today)
+          try "A control (pristine mirror)" "upstream/master:refs/heads/a-pristine"
+          # B: upstream tip + a fresh strip commit; neither old nor new tip has upstream workflows
+          git checkout -q -B b upstream/master
+          git rm -r -q .github/workflows && git commit -q -m "strip upstream .github/workflows"
+          echo "B diff old->new tip, workflows: [$(git diff --name-status origin/b-stripped b -- .github/workflows | tr '\n' ' ')]"
+          try "B stripped mirror" "b:refs/heads/b-stripped"
+          # C: B + the same additive layer (our.yml identical in old and new tips)
+          git checkout -q -B c b
+          git checkout origin/c-mayhem -- mayhem .github/workflows/our.yml
+          git commit -q -m "Mayhem integration (stand-in)"
+          echo "C diff old->new tip, workflows: [$(git diff --name-status origin/c-mayhem c -- .github/workflows | tr '\n' ' ')]"
+          try "C mayhem on stripped mirror" "c:refs/heads/c-mayhem"
+          exit 0
