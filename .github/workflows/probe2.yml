@@ -1,0 +1,41 @@
+# Follow-up: (D) can GITHUB_TOKEN do the first switch-over (delete existing upstream workflows at the
+# tip)? (E) are upstream commits that EDIT a workflow also judged by the tips?
+name: probe2
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push cases with GITHUB_TOKEN
+        run: |
+          set +e
+          git config user.name probe; git config user.email probe@users.noreply.github.com
+          git remote add upstream https://github.com/kermitt2/pdfalto.git
+          git fetch -q upstream master
+          git fetch -q origin d-switch e0-pristine e-stripped
+          EDIT=f54ddaf
+          try() {  # case, refspec
+            out="$(git push --force origin "$2" 2>&1)"; rc=$?
+            echo "=== $1 (rc=$rc)"; echo "$out"
+            { echo "### $1: $([ $rc -eq 0 ] && echo ACCEPTED || echo REJECTED)"; echo '```'; echo "$out"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          }
+          # D: switch-over. Old tip has upstream workflows; new tip = same commit + strip (deletes them).
+          git checkout -q -B d origin/d-switch
+          git rm -r -q .github/workflows && git commit -q -m "strip upstream .github/workflows"
+          echo "D diff old->new tip, workflows: [$(git diff --name-status origin/d-switch d -- .github/workflows | tr '\n' ' ')]"
+          try "D switch-over (delete existing workflows at the tip)" "d:refs/heads/d-switch"
+          # E0 control: pristine branch fast-forwarded by an upstream commit that EDITS workflows
+          try "E0 control (pristine + workflow-editing commit)" "$EDIT:refs/heads/e0-pristine"
+          # E: stripped branch, new tip = the editing commit + strip; tips have no workflows
+          git checkout -q -B e "$EDIT"
+          git rm -r -q .github/workflows && git commit -q -m "strip upstream .github/workflows"
+          echo "E diff old->new tip, workflows: [$(git diff --name-status origin/e-stripped e -- .github/workflows | tr '\n' ' ')]"
+          echo "E pushed commits touching workflows: $(git log --format=%h origin/e-stripped..e -- .github/workflows | tr '\n' ' ')"
+          try "E stripped + workflow-editing upstream commit" "e:refs/heads/e-stripped"
+          exit 0
